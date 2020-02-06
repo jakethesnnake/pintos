@@ -1,0 +1,8 @@
+/*	
+	1) assert: interupts are on
+	2) disable interrupts
+	3) store current thread (c)
+	4) store wakeup time in ticks INSIDE OF (c)
+	5) add (c) 's elements to sleep list (ls)
+	6) block (c) and enable interrupts
+*/
