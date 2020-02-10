@@ -24,6 +24,9 @@ static int64_t ticks;
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
 
+/* The list of sleeping threads */
+static struct list sleeping_threads;
+
 static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
@@ -37,6 +40,8 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+
+  list_init(&sleeping_threads);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -89,11 +94,17 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
+  /* To account for alarm-negative and alarm-zero */
+  if(ticks <= 0) return;
+
   int64_t start = timer_ticks ();
 
-  ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+  /* Get the total ticks, and add that as the sleeping ticks to the current thread */
+  struct thread* t = thread_current();
+  t->sleep_ticks = ticks + start;
+
+  list_insert_ordered(&sleeping_threads, &t->sleep_elem, sleep_order, NULL);
+  sema_down(&t->timer_sema);
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -170,8 +181,20 @@ timer_print_stats (void)
 static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
+  struct thread* t;
   ticks++;
   thread_tick ();
+  // While loop to account for multiple threads waking up on the same tick (ordered version)
+  while(!list_empty(&sleeping_threads)) {
+    t = list_entry(list_front(&sleeping_threads), struct thread, sleep_elem);
+    if(ticks >= t->sleep_ticks) {
+      sema_up(&t->timer_sema);
+      list_pop_front(&sleeping_threads);
+    }
+    else {
+      break;
+    }
+  }
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer

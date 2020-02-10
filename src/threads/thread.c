@@ -37,6 +37,8 @@ static struct thread *initial_thread;
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
 
+static const int MAX_DEPTH = 8;
+
 /* Stack frame for kernel_thread(). */
 struct kernel_thread_frame 
   {
@@ -171,6 +173,7 @@ thread_create (const char *name, int priority,
   struct switch_entry_frame *ef;
   struct switch_threads_frame *sf;
   tid_t tid;
+  enum intr_level old_level;
 
   ASSERT (function != NULL);
 
@@ -200,6 +203,13 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+
+  /*
+	Yield if the higher priority is ready as soon as the thread is created
+  */
+  old_level = intr_disable();
+  priority_check();
+  intr_set_level (old_level);
 
   return tid;
 }
@@ -237,7 +247,7 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+  list_insert_ordered(&ready_list, &t->elem, priority_order, NULL);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -308,7 +318,7 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+  	list_insert_ordered(&ready_list, &cur->elem, priority_order, NULL); 
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -335,14 +345,62 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
+  enum intr_level old_level = intr_disable();
+
   thread_current ()->priority = new_priority;
+  thread_current ()->init_priority = new_priority;
+  int old_priority = thread_current ()->priority;
+
+  /* If the head of this thread's list of donated priorities is a bigger priority, 
+  		then change this thread's priority to the head's priority */
+  if(!list_empty(&thread_current()->donated_list)) {
+    int max_list_priority = list_entry(list_front(&thread_current()->donated_list), struct thread, donation_elem)->priority;
+    if(thread_current ()->priority < max_list_priority) {
+      thread_current ()->priority = max_list_priority;
+    }
+  }
+
+  /* If the donated list had a bigger priority that we set this thread's priority to, 
+  		then donate the priority to child threads */
+  if(thread_current ()->priority > old_priority) {
+    // donation(thread_current(), thread_current()->waiting_lock);
+    donation();
+  }
+  /* Otherwise, check if we should yield */
+  else if(thread_current ()->priority < old_priority) {
+    priority_check(); // Thread should yield if the no longer highest priority
+  }
+  
+  intr_set_level (old_level); 
 }
 
-/* Returns the current thread's priority. */
+/* Returns the current thread's priority (which will be the max of donated_priority and priority. */
 int
 thread_get_priority (void) 
 {
-  return thread_current ()->priority;
+  enum intr_level old_level = intr_disable();
+  int priority = thread_current()->priority;
+  intr_set_level (old_level);
+  return priority;
+}
+
+/* Compare the priority of the current thread and the first element in the ready list
+    and yield accordingly */
+void priority_check(void) {
+	enum intr_level old_level = intr_disable ();
+
+	if(!list_empty(&ready_list)) {
+    /* The first element of the ready list, which is the highest priority in the list */
+    struct thread *t = list_entry(list_front(&ready_list), struct thread, elem); 
+
+    /* If the current thread's priority is smaller than the first element
+        in the ready list's priority, then yield */
+    if (thread_current ()->priority < t->priority) {
+      thread_yield ();
+    }
+	}
+
+	intr_set_level(old_level);
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -467,6 +525,14 @@ init_thread (struct thread *t, const char *name, int priority)
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
+
+  /* Initialize priority donation */
+  t->init_priority = priority;
+  t->waiting_lock = NULL;
+  list_init(&t->donated_list);
+
+  /* Initialize the semaphore */
+  sema_init(&t->timer_sema, 0);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -578,7 +644,54 @@ allocate_tid (void)
 
   return tid;
 }
-
+
+/* Returns true if thread_a has a shorter SLEEP time, returns false if thread
+ * b has a shorter sleep time. If used in a list orderering function, this
+ * will sort the list from smallest to greatest sleep time */
+bool 
+sleep_order(const struct list_elem* a, const struct list_elem* b, void *aux UNUSED) {
+  const struct thread* thread_a = list_entry(a, struct thread, sleep_elem);
+  const struct thread* thread_b = list_entry(b, struct thread, sleep_elem);
+  return thread_a->sleep_ticks < thread_b->sleep_ticks;
+}
+
+
+/* Returns true if thread_a has a LONGER sleep time, returns false if thread
+ * b has a longer sleep time. If used in a list orderering function, this
+ * will sort the list from GREATEST to SMALLEST priority */
+bool 
+priority_order(const struct list_elem* a, const struct list_elem* b, void *aux UNUSED) {
+  const struct thread* thread_a = list_entry(a, struct thread, elem);
+  const struct thread* thread_b = list_entry(b, struct thread, elem);
+  return thread_a->priority > thread_b->priority;
+}
+
+bool 
+donation_order(const struct list_elem* a, const struct list_elem* b, void *aux UNUSED) {
+  const struct thread* thread_a = list_entry(a, struct thread, donation_elem);
+  const struct thread* thread_b = list_entry(b, struct thread, donation_elem);
+  return thread_a->priority > thread_b->priority;
+}
+
+void 
+donation() {
+  struct thread* t = thread_current();
+  struct lock* l = thread_current()->waiting_lock;
+  int depth = 0;
+  while(l && depth < MAX_DEPTH) { 
+  	if(l->holder != NULL && l->holder->priority < t->priority) {
+  		l->holder->priority = t->priority;
+	    t = l->holder;
+	    l = t->waiting_lock;
+	    depth++;
+  	}
+  	else {
+  		return;
+  	}
+  }
+}
+
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
