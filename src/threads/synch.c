@@ -238,14 +238,16 @@ lock_acquire (struct lock *lock)
 bool
 lock_try_acquire (struct lock *lock)
 {
-  bool success;
-
   ASSERT (lock != NULL);
   ASSERT (!lock_held_by_current_thread (lock));
 
-  success = sema_try_down (&lock->semaphore);
-  if (success)
-    lock->holder = thread_current ();
+  enum intr_level old_level = intr_disable ();
+  bool success = sema_try_down (&lock->semaphore);
+
+  /* Gives the lock to the current thread if the semaphore is decremented  */
+  if (success) lock->holder = thread_current ();
+  
+  intr_set_level (old_level);
   return success;
 }
 
