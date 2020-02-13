@@ -632,15 +632,6 @@ allocate_tid (void)
   return tid;
 }
 
-/* Returns true if the thread with element a has a shorter sleep time than that of b.
- * Returns false otherwise. */
-bool 
-compare_sleep_time(const struct list_elem* a, const struct list_elem* b, void *aux UNUSED) {
-  return list_entry(a, struct thread, sleep_elem)->wakeup_tick > 
-    list_entry(b, struct thread, sleep_elem)->wakeup_tick;
-}
-
-
 /* Returns true if thread with element a has a higher priority than that of b
  * Returns false otherwise. */
 bool 

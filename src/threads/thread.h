@@ -94,7 +94,6 @@ struct thread
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
-    struct list_elem sleep_elem;        /* List element for the sleeping list */
     struct list_elem donation_elem;     /* List element for the donated threads list */
     struct semaphore timer_sema;        /* Thread's semaphore */
     struct list donated_list;           /* List of threads that have donated to this thread */
