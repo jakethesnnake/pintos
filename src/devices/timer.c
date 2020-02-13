@@ -208,7 +208,7 @@ timer_interrupt (struct intr_frame *args UNUSED)
     if(front->wakeup_tick <= timer_ticks()) 
     {
       list_pop_front(&sleeping_threads);
-      list_insert_ordered (&prio_sleeping_threads, &front->elem, cmp_priority, 0);
+      list_insert_ordered (&sleeping_threads, &front->elem, cmp_priority, 0);
       thread_unblock(front);
     }
     else 
