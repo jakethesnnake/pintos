@@ -344,23 +344,25 @@ thread_set_priority (int new_priority)
 {
   enum intr_level old_level = intr_disable();
 
-  int old_priority = thread_current ()->priority;
-  thread_current ()->priority = new_priority;
-  thread_current ()->init_priority = new_priority;
+  struct thread *current_thread = thread_current();
+  int old_priority = current_thread->priority;
+
+  current_thread->priority = new_priority;
+  current_thread->init_priority = new_priority;
 
   /* if the head of the thread's list of donated priorities has a higher priority, 
    * we change its priority to the head's priority */
-  if(!list_empty(&thread_current()->donated_list)) {
-    int max_list_priority = list_entry(list_front(&thread_current()->donated_list), struct thread, donation_elem)->priority;
-    if(thread_current ()->priority < max_list_priority) {
-      thread_current ()->priority = max_list_priority;
+  if(!list_empty(&current_thread->donated_list)) {
+    int max_list_priority = list_entry(list_front(&current_thread->donated_list), struct thread, donation_elem)->priority;
+    if(current_thread->priority < max_list_priority) {
+      current_thread->priority = max_list_priority;
     }
   }
 
   /* if we increased out priority, we donate to our children.
    * if we decreased our priority, we check if we should yield */
-  if(thread_current ()->priority > old_priority) priority_donation();
-  else if(thread_current ()->priority < old_priority) check_priority();
+  if(current_thread->priority > old_priority) priority_donation();
+  else if(current_thread->priority < old_priority) check_priority();
   
   intr_set_level (old_level); 
 }
