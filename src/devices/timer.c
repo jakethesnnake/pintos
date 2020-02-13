@@ -97,15 +97,6 @@ cmp_waketick(const struct list_elem *a, const struct list_elem *b, void *aux)
   return t1->wakeup_tick < t2->wakeup_tick;
 }
 
-bool 
-cmp_priority(const struct list_elem *a, const struct list_elem *b, void *aux)
-{
-  struct thread *t1 = list_entry (a, struct thread, elem);
-  struct thread *t2 = list_entry (b, struct thread, elem);
-
-  return t1->priority < t2->priority;
-}
-
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
 void
