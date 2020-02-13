@@ -33,16 +33,12 @@ static void real_time_delay (int64_t num, int32_t denom);
 /* list of sleeping threads*/
 struct list sleeping_threads;
 
-/* list of sleeping threads by priority*/
-struct list prio_sleeping_threads;
-
 /* Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
 void
 timer_init (void) 
 {
   list_init(&sleeping_threads);
-  list_init(&prio_sleeping_threads);
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
 }
@@ -128,11 +124,6 @@ timer_sleep (int64_t ticks)
   
   thread_block();
   intr_set_level(old_intr_level);
-
-  //int64_t start = timer_ticks ();
-
-  //while (timer_elapsed (start) < ticks) 
-  //  thread_yield ();
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -211,18 +202,13 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
 
-  enum intr_level old_intr_level = intr_disable ();
-
   while(list_size(&sleeping_threads)) 
   {
     struct thread *front = list_entry(list_front (&sleeping_threads), struct thread, elem);
     if(front->wakeup_tick <= timer_ticks()) 
     {
       list_pop_front(&sleeping_threads);
-      list_insert_ordered (&prio_sleeping_threads, &front->elem, cmp_priority, 0);
-      //printf("priority: %d\n", front->priority);
-      //printf("tick: %d\n", front->wakeup_tick);
-      //thread_unblock(front);
+      thread_unblock(front);
     }
     else 
     {
@@ -230,13 +216,6 @@ timer_interrupt (struct intr_frame *args UNUSED)
     }
   }
 
-  while(list_size(&prio_sleeping_threads))
-  {
-    struct thread *back  = list_entry(list_pop_back(&prio_sleeping_threads), struct thread, elem);
-    thread_unblock(back);
-  }
-
-  intr_set_level (old_intr_level);
   thread_tick ();
 }
 
