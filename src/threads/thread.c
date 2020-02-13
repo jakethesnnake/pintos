@@ -37,6 +37,8 @@ static struct thread *initial_thread;
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
 
+static const int MAX_DEPTH = 8;
+
 /* Stack frame for kernel_thread(). */
 struct kernel_thread_frame 
   {
@@ -201,6 +203,11 @@ thread_create (const char *name, int priority,
   /* Add to run queue. */
   thread_unblock (t);
 
+  /* Yield if the higher priority is ready as soon as the thread is created */
+  enum intr_level old_level = intr_disable();
+  check_priority();
+  intr_set_level (old_level);
+
   return tid;
 }
 
@@ -237,7 +244,7 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+  list_insert_ordered(&ready_list, &t->elem, compare_priority, NULL);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -308,7 +315,7 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+  	list_insert_ordered(&ready_list, &cur->elem, compare_priority, NULL); 
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -335,14 +342,50 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
+  enum intr_level old_level = intr_disable();
+
+  int old_priority = thread_current ()->priority;
   thread_current ()->priority = new_priority;
+  thread_current ()->init_priority = new_priority;
+
+  /* if the head of the thread's list of donated priorities has a higher priority, 
+   * we change its priority to the head's priority */
+  if(!list_empty(&thread_current()->donated_list)) {
+    int max_list_priority = list_entry(list_front(&thread_current()->donated_list), struct thread, donation_elem)->priority;
+    if(thread_current ()->priority < max_list_priority) {
+      thread_current ()->priority = max_list_priority;
+    }
+  }
+
+  /* if we increased out priority, we donate to our children.
+   * if we decreased our priority, we check if we should yield */
+  if(thread_current ()->priority > old_priority) priority_donation();
+  else if(thread_current ()->priority < old_priority) check_priority();
+  
+  intr_set_level (old_level); 
 }
 
-/* Returns the current thread's priority. */
+/* Returns the current thread's priority */
 int
 thread_get_priority (void) 
 {
-  return thread_current ()->priority;
+  enum intr_level old_level = intr_disable();
+  int priority = thread_current()->priority;
+  intr_set_level (old_level);
+  return priority;
+}
+
+/* Compare the priority of the current thread to the priority 
+ * of the first element in the ready list and yield if necessary */
+void check_priority(void) {
+	enum intr_level old_level = intr_disable ();
+
+	if(!list_empty(&ready_list)) {
+    struct thread *t = list_entry(list_front(&ready_list), struct thread, elem); 
+    if (thread_current ()->priority < t->priority) thread_yield ();
+	}
+
+	intr_set_level(old_level);
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -467,6 +510,14 @@ init_thread (struct thread *t, const char *name, int priority)
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
+
+  /* Initialize priority donation */
+  t->init_priority = priority;
+  t->waiting_lock = NULL;
+  list_init(&t->donated_list);
+
+  /* Initialize the semaphore */
+  sema_init(&t->timer_sema, 0);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -578,7 +629,49 @@ allocate_tid (void)
 
   return tid;
 }
-
+
+/* Returns true if the thread with element a has a shorter sleep time than that of b.
+ * Returns false otherwise. */
+bool 
+compare_sleep_time(const struct list_elem* a, const struct list_elem* b, void *aux UNUSED) {
+  return list_entry(a, struct thread, sleep_elem)->wakeup_tick > 
+    list_entry(b, struct thread, sleep_elem)->wakeup_tick;
+}
+
+
+/* Returns true if thread with element a has a higher priority than that of b
+ * Returns false otherwise. */
+bool 
+compare_priority(const struct list_elem * a, const struct list_elem * b, void * aux UNUSED) {
+  return list_entry(a, struct thread, elem)->priority > 
+    list_entry(b, struct thread, elem)->priority;
+}
+
+/* Returns true if thread with donation element a has a higher priority than that of b
+ * Returns false otherwise. */
+bool 
+compare_donation_priority(const struct list_elem * a, const struct list_elem * b, void * aux UNUSED) {
+  return list_entry(a, struct thread, donation_elem)->priority > 
+    list_entry(b, struct thread, donation_elem)->priority;
+}
+
+/* Compares the priority of the current thread to the priority of the thread that is
+ * holding the lock that the current thread is trying to acquire. If the current thread's
+ * priority is greater, we donate its priority to the holder and iterate deeper if necessary */
+void 
+priority_donation(void) {
+  struct thread * cur = thread_current();
+  struct lock * lock = thread_current()->waiting_lock;
+  int depth = 0;
+  while(lock && depth < MAX_DEPTH) {
+  	if(lock->holder && lock->holder->priority < cur->priority) {
+  		lock->holder->priority = cur->priority;
+      lock = lock->holder->waiting_lock;
+	    ++depth;
+  	} else break;
+  }
+}
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);

@@ -24,6 +24,8 @@ struct lock
     struct semaphore semaphore; /* Binary semaphore controlling access. */
   };
 
+void restore_thread_priority(struct thread *);
+void remove_donated_threads(struct lock *);
 void lock_init (struct lock *);
 void lock_acquire (struct lock *);
 bool lock_try_acquire (struct lock *);
@@ -36,6 +38,7 @@ struct condition
     struct list waiters;        /* List of waiting threads. */
   };
 
+bool compare_thread_priority(const struct list_elem* a, const struct list_elem* b, void *aux);
 void cond_init (struct condition *);
 void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
