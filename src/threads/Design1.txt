@@ -1,0 +1,239 @@
+﻿CIS 520 - Programming Project #1
+
+
+                   
+---- GROUP ----
+
+
+>> Fill in the names and email addresses of your group members.
+
+
+Andrew Loenen | loenen@ksu.edu
+Rylan Kasitz | rylankasitz@ksu.edu
+Jake Willson | jakedwillson@ksu.edu
+
+
+---- PRELIMINARIES ----
+
+
+>> If you have any preliminary comments on your submission, notes for
+>> the TA, or extra credit, please give them here.
+
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation,
+>> course text, lecture notes, and course staff.
+
+
+https://github.com/rpwilliams/CIS520_Proj1
+
+
+ALARM CLOCK
+===========
+
+
+---- DATA STRUCTURES ----
+
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+
+struct thread 
+{
+        …
+        int64_t wakeup_tick;
+        …
+}
+* This was added to store the time a thread needs to wake up.
+
+
+struct list sleeping_threads;
+
+
+* This was added to keep track of the currently sleeping.
+
+
+
+
+---- ALGORITHMS ----
+
+
+>> A2: Briefly describe what happens in a call to your timer_sleep(),
+>> including the effects of the timer interrupt handler.
+
+
+In timer_sleep the current thread is grabbed and interrupts are disabled. Then the wakeup_tick value of that thread is set to current ticks plus the ticks value passed in. This thread is then added to a list of sleeping threads sorted by wake up time. The thread is then blocked and interrupts are set back to their previous state.
+
+
+>> A3: What steps are taken to minimize the amount of time spent in
+>> the timer interrupt handler?
+
+
+In order to minimize the time spent here we ordered the list of sleeping threads by wake up time and when you looped through them once we got past the timer tick we broke out of the loop. Thus allowing us to only check the needed sleeping threads.
+
+
+
+
+---- SYNCHRONIZATION ----
+
+
+>> A4: How are race conditions avoided when multiple threads call
+>> timer_sleep() simultaneously?
+
+
+Inside the timer interrupt handler there is a while loop to loop through the threads and check if it is time for them to wake up. If there are two threads with the same wakeup time this loop will handle it by unblocking both of them. The loop fixes the race condition problem as opposed to just checking the first element with an if statement.
+
+
+>> A5: How are race conditions avoided when a timer interrupt occurs
+>> during a call to timer_sleep()?
+
+
+The interrupts are disabled in timer_sleep when a critical section needs to execute, therefore avoiding a call of timer_interupt during that period.
+
+
+---- RATIONALE ----
+
+
+>> A6: Why did you choose this design?  In what ways is it superior to
+>> other designs that you considered?
+
+
+We decided to use thread block and unblock to sleep the thread because it removed complexity in the code while keeping the alarm system relatively efficient. We decide to remove interrupts in order to keep the code in thread_sleep and timer_interupt from running at the same time and causing synchronization issues. We considered using semaphores to keep synchronization but we thought timer interrupts would be less overhead and would cause too many issues as it was for a small amount of code.
+
+
+PRIORITY SCHEDULING
+===================
+
+
+---- DATA STRUCTURES ----
+
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+
+static const int MAX_DEPTH = 8; // imposes constraint on nested priority donation (thread.c)
+
+
+struct thread: // (thread.h)
+          
+        //Added new fields to the thread struct to help with priority donation (waiting_lock, donated_list, etc) as well as a tick to let the thread know when to wake up.
+
+
+
+
+
+
+>> B2: Explain the data structure used to track priority donation.
+
+
+We implemented a Linked List to store donations to threads. By doing this, we allow threads to donate priority and be added to other threads donated_list and order that list by priority. This is used when we’re setting priority by checking to see if any donated priorities are greater than the current thread’s priority.
+
+
+
+
+---- ALGORITHMS ----
+
+
+>> B3: How do you ensure that the highest priority thread waiting for
+>> a lock, semaphore, or condition variable wakes up first?
+
+
+When each thread is unblocked, it is inserted into the ready list according to its priority. The first element in the ready list will necessarily be the highest priority thread.
+
+
+>> B4: Describe the sequence of events when a call to lock_acquire()
+>> causes a priority donation.  How is nested donation handled?
+
+
+If the current thread is waiting in line for a semaphore (behind threads with lower priorities), the current thread will donate its priority to the other threads.
+
+
+Nested priority takes place when the thread with the highest priority is behind two threads with lower priorities. It will handle this event by donating to the thread in front of it. Then, the thread that received the donation will do the same. Iteration will continue up to the front of the line.
+
+
+>> B5: Describe the sequence of events when lock_release() is called
+>> on a lock that a higher-priority thread is waiting for.
+
+
+When a higher priority thread is waiting on a lower priority thread, the higher priority thread will donate its priority until the semaphore becomes positive and thus the lock becomes available. Once the current thread acquires the lock, lock_release() is called on the lock that the lower-priority thread is currently holding on to.
+
+
+---- SYNCHRONIZATION ----
+
+
+>> B6: Describe a potential race in thread_set_priority() and explain
+>> how your implementation avoids it.  Can you use a lock to avoid
+>> this race?
+
+
+A potential race that could occur when thread_set_priority() runs is that while a thread is grabbing the highest priority from its donated list, another thread could donate or rescind it’s donation to that thread at the same time causing said race to happen. To avoid this, we make our thread nonpreemptive so nothing can interrupt it while we are grabbing the highest priority. After all is done, we re-enable interrupts.
+
+
+---- RATIONALE ----
+
+
+>> B7: Why did you choose this design?  In what ways is it superior to
+>> another design you considered?
+
+
+We chose this design because it implements a semaphore and ordered list by priority to schedule correctly. It is superior to other designs because an ordered list allows us to have an organizational approach to find the highest priority in a list of donations. This is important when we do nested donations.
+
+
+
+
+ADVANCED SCHEDULER [EXTRA CREDIT]
+=================================
+
+
+---- DATA STRUCTURES ----
+
+
+>> C1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+
+---- ALGORITHMS ----
+
+
+>> C2: Suppose threads A, B, and C have nice values 0, 1, and 2.  Each
+>> has a recent_cpu value of 0.  Fill in the table below showing the
+>> scheduling decision and the priority and recent_cpu values for each
+>> thread after each given number of timer ticks:
+
+
+timer  recent_cpu    priority   thread
+ticks   A   B   C   A   B   C   to run
+-----  --  --  --  --  --  --   ------
+ 0
+ 4
+ 8
+12
+16
+20
+24
+28
+32
+36
+
+
+>> C3: Did any ambiguities in the scheduler specification make values
+>> in the table uncertain?  If so, what rule did you use to resolve
+>> them?  Does this match the behavior of your scheduler?
+
+
+>> C4: How is the way you divided the cost of scheduling between code
+>> inside and outside interrupt context likely to affect performance?
+
+
+---- RATIONALE ----
+
+
+>> C5: Briefly critique your design, pointing out advantages and
+>> disadvantages in your design choices.  If you were to have extra
+>> time to work on this part of the project, how might you choose to
+>> refine or improve your design?
